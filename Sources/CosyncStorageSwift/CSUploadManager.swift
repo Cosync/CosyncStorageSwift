@@ -30,6 +30,7 @@ import RealmSwift
 
 var csLogger = Logger(label: "CSUploadManager")
 
+@available(macOS 10.15, *)
 extension URLSession {
     private static var cosyncUploadMap = [String:CosyncAssetUpload]()
     
@@ -50,6 +51,7 @@ extension URLSession {
     }
 }
 
+@available(macOS 10.15, *)
 public enum CSUploadError: Error {
     case invalidImage
     case uploadFail
@@ -102,6 +104,7 @@ public struct CSUploadItem {
     var expiration: Double = 168.0
 }
 
+@available(macOS 10.15, *)
 public enum CSUploadState {
     case transactionStart(Int, CSTransaction)
     case assetStart(Int, Int, CosyncAssetUpload)
@@ -114,6 +117,7 @@ public enum CSUploadState {
 
 typealias CSUploadCallback = (_ txId: String, _ state: CSUploadState) -> Void
 
+@available(macOS 10.15, *)
 public class CSTransaction {
     
     var txId: String = ""
@@ -158,6 +162,7 @@ public class CSTransaction {
     }
 }
 
+@available(macOS 10.15, *)
 public class CSUploadManager: NSObject, URLSessionTaskDelegate {
     
     static var shared = CSUploadManager()
