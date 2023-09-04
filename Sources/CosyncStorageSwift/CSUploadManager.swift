@@ -241,7 +241,7 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
     }
     
     @MainActor
-    func uploadAssets(uploadItems: [CSUploadItem], transactionId: String, onUpload: @escaping CSUploadCallback) throws {
+    public func uploadAssets(uploadItems: [CSUploadItem], transactionId: String, onUpload: @escaping CSUploadCallback) throws {
         
         csLogger.info("starting upload request")
         
@@ -374,7 +374,7 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
     }
     
     @MainActor
-    func uploadImage(session: URLSession, assetToUpload: CosyncAssetUpload) async throws {
+    public func uploadImage(session: URLSession, assetToUpload: CosyncAssetUpload) async throws {
         
         csLogger.info("\(#function) start upload image")
         
@@ -395,7 +395,7 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
     }
     
     @MainActor
-    func uploadVideo(session: URLSession, assetToUpload: CosyncAssetUpload) async throws {
+    public func uploadVideo(session: URLSession, assetToUpload: CosyncAssetUpload) async throws {
         
         csLogger.info("start upload video")
        
@@ -423,7 +423,7 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
     }
     
     @MainActor
-    func uploadImageCuts(session: URLSession, assetToUpload: CosyncAssetUpload, imageToCut: UIImage, mimeType: String) async throws {
+    public func uploadImageCuts(session: URLSession, assetToUpload: CosyncAssetUpload, imageToCut: UIImage, mimeType: String) async throws {
         
         csLogger.info("start upload image cuts")
         
@@ -456,7 +456,7 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
         csLogger.info("end upload image cuts")
     }
     
-    func uploadFile(session: URLSession, writeUrl: String, fileUrl: URL) async throws  {
+    public func uploadFile(session: URLSession, writeUrl: String, fileUrl: URL) async throws  {
         
         csLogger.info("start upload file")
         
@@ -478,7 +478,7 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
         csLogger.info("end upload file")
     }
     
-    func uploadData(session: URLSession, data: Data, writeUrl: String, mimeType: String) async throws {
+    public func uploadData(session: URLSession, data: Data, writeUrl: String, mimeType: String) async throws {
         
         csLogger.info("start upload data")
         
