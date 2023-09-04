@@ -71,7 +71,7 @@ public enum CSUploadError: Error {
 
 @available(macOS 10.15, *)
 public struct CSUploadItem {
-    enum MediaType {
+    public enum MediaType {
         case image
         case video
         case audio
