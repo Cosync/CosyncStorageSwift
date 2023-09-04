@@ -103,7 +103,12 @@ public struct CSUploadItem {
     var contentType: String = ""
     var expiration: Double = 168.0
     
-    public init() {}
+    public init(id: ObjectId, url: URL, type: MediaType, expiration: Double) {
+        self.id = id
+        self.url = url
+        self.type = type
+        self.expiration = expiration
+    }
 }
 
 @available(macOS 10.15, *)
