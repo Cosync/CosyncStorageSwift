@@ -241,7 +241,7 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
     }
     
     @MainActor
-    public func uploadAssets(uploadItems: [CSUploadItem], transactionId: String, onUpload: @escaping CSUploadCallback) throws {
+    func uploadAssets(uploadItems: [CSUploadItem], transactionId: String, onUpload: @escaping CSUploadCallback) throws {
         
         csLogger.info("starting upload request")
         
