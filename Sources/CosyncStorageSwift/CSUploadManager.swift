@@ -172,7 +172,7 @@ public class CSTransaction {
 @available(macOS 10.15, *)
 public class CSUploadManager: NSObject, URLSessionTaskDelegate {
     
-    static var shared = CSUploadManager()
+    public static var shared = CSUploadManager()
     private var realm: Realm!
     private var app: App!
     private var userId: String!
