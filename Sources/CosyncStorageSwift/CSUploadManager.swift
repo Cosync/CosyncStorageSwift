@@ -102,6 +102,8 @@ public struct CSUploadItem {
     var originalSize: Int = 0
     var contentType: String = ""
     var expiration: Double = 168.0
+    
+    public init() {}
 }
 
 @available(macOS 10.15, *)
