@@ -78,7 +78,7 @@ extension URL {
         return nil
     }
     
-    static func str(_ str: String) -> URL? {
+    public static func str(_ str: String) -> URL? {
         return URL(string: str)
     }
 }
