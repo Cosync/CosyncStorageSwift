@@ -26,6 +26,7 @@
 import Foundation
 import RealmSwift
 
+@available(macOS 10.15, *)
 public class CosyncAssetUpload: Object {
     
     @Persisted(primaryKey: true) public var _id: ObjectId
@@ -63,6 +64,7 @@ public class CosyncAssetUpload: Object {
     @Persisted public var updatedAt: Date?
 }
 
+@available(macOS 10.15, *)
 public class CosyncAsset: Object {
      
     @Persisted(primaryKey: true) public var _id: ObjectId
@@ -89,6 +91,7 @@ public class CosyncAsset: Object {
     @Persisted public var updatedAt: Date?
 }
 
+@available(macOS 10.15, *)
 public struct AssetModel: Codable {
     public var id: String
     public var userId: String

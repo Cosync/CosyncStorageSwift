@@ -184,7 +184,7 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
     private var sessionId: String!
     
     @MainActor
-    func configure(app: App, realm: Realm) {
+    public func configure(app: App, realm: Realm) {
         
         self.app = app
         self.realm = realm
