@@ -122,7 +122,8 @@ public enum CSUploadState {
     case transactionEnd(Int, [CosyncAsset], CSTransaction)
 }
 
-typealias CSUploadCallback = (_ txId: String, _ state: CSUploadState) -> Void
+@available(macOS 10.15, *)
+public typealias CSUploadCallback = (_ txId: String, _ state: CSUploadState) -> Void
 
 @available(macOS 10.15, *)
 public class CSTransaction {
@@ -241,7 +242,7 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
     }
     
     @MainActor
-    func uploadAssets(uploadItems: [CSUploadItem], transactionId: String, onUpload: @escaping CSUploadCallback) throws {
+    public func uploadAssets(uploadItems: [CSUploadItem], transactionId: String, onUpload: @escaping CSUploadCallback) throws {
         
         csLogger.info("starting upload request")
         
