@@ -30,14 +30,29 @@ import RealmSwift
 
 var csLogger = Logger(label: "CSUploadManager")
 
+// Helper extension that allows JS formatted dates to
+// be deserialized
+@available(macOS 10.15, *)
+extension Formatter {
+    static let iso8601: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .iso8601)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX"
+        return formatter
+    }()
+}
+
+// Extension used to track asset upload progress
 @available(macOS 10.15, *)
 extension URLSession {
-    private static var cosyncUploadMap = [String:CosyncAssetUpload]()
+    private static var cosyncUploadMap = [String:CSAssetUpload]()
     
-    var csActiveUpload: CosyncAssetUpload {
+    var csActiveUpload: CSAssetUpload {
         get {
             let tmpAddress = String(format: "%p", unsafeBitCast(self, to: Int.self))
-            return URLSession.cosyncUploadMap[tmpAddress] ?? CosyncAssetUpload()
+            return URLSession.cosyncUploadMap[tmpAddress] ?? CSAssetUpload()
         }
         set(assetUploading) {
             let tmpAddress = String(format: "%p", unsafeBitCast(self, to: Int.self))
@@ -51,11 +66,146 @@ extension URLSession {
     }
 }
 
+// Object passed to uploadAssets API that describes the upload
+// being performed
+@available(macOS 10.15, *)
+public struct CSUploadItem {
+    
+    public enum MediaType {
+        case image
+        case video
+        case audio
+        case unknown
+        
+        func description() -> String {
+            switch self {
+            case .image:
+                return "image"
+            case .video:
+                return "video"
+            case .audio:
+                return "audio"
+            case .unknown:
+                return "unkown"
+            }
+        }
+    }
+    
+    // The type of ios asset we are trying to upload
+    var mediaType: MediaType
+    
+    // The buckets in which the asset will be stored
+    var path: String {
+        return mediaType.description()
+    }
+    
+    // User supplied tag that will be passed back during progress
+    // callbacks. Can be useful for reconciling app asset state with
+    // asset results.
+    var tag: String = ""
+    
+    // URL to local resource
+    var url: URL
+    
+    // The tpe of media. Determines asset processing
+    //var type: MediaType = .unknown
+    
+    // If false skips creating additional asset cuts.
+    // Only an original is saved.
+    var noCut: Bool = false
+    
+    // Small cut size. Size value refers to the square
+    // dimensions.
+    var smallCutSize:Int = 300
+    
+    // Medium cut size. Size value refers to the square
+    // dimensions.
+    var mediumCutSize: Int = 600
+    
+    // Large cut size. Size value refers to the square
+    // dimensions.
+    var largeCutSize: Int = 900
+    
+    // Full size of the asset.
+    // If not 0 then it will be resized.
+    var originalSize: Int = 0
+    
+    // Time for which a read/write URL will be valid.
+    var expirationHours: Double = 168.0
+    
+    public init(tag: String, url: URL, mediaType: CSUploadItem.MediaType, expiration: Double) {
+        self.tag = tag
+        self.url = url
+        self.mediaType = mediaType
+        self.expirationHours = expiration
+    }
+}
+
+@available(macOS 10.15, *)
+// Asset upload state object. Used to track and report
+// upload state.
+public struct CSAssetUpload {
+
+    public var filePath: String = ""
+    public var contentId: Int = 0
+    public var contentType: String = ""
+    public var expirationHours: Double = 24.0
+    public var size: Int = 0
+    public var duration: Double = 0.0
+    public var color: String = "#000000"
+    public var xRes: Int = 0
+    public var yRes: Int = 0
+    public var caption: String = ""
+    public var extra: String = ""
+    public var writeUrls: CSWriteUrls?
+    public var noCuts: Bool = false
+    public var transactionId = ""
+    public var uploadCallback: CSUploadCallback?
+    public var smallCutSize:Int = 300
+    public var mediumCutSize: Int = 600
+    public var largeCutSize: Int = 900
+    public var originalSize: Int = 0
+    public var index = 0
+    public var uploadSessionCount = 0
+    public var tag: String = ""
+}
+
+// Upload states that are used to communicate upload
+// progress to the client.
+@available(macOS 10.15, *)
+public enum CSUploadState {
+    // The upload session is starting. Called once.
+    case transactionStart
+    // An asset is about to be uploaded. Called for each asset.
+    case assetStart(Int /* asset index */ , Int /* total uploads */, CSAssetUpload)
+    // Reports the progress in bytes of the image upload. Called multiple
+    // times for each asset.
+    case assetPogress(Int64 /* bytes uploaded */, Int64 /* total bytes */, CSAssetUpload)
+    // Unable to initialize asset. Nothing has been uploaded.
+    case assetInitError(Error, CSUploadItem)
+    // Unable to upload asset or save it
+    case assetUploadError(Error, CSAssetUpload)
+    // The asset has been uploaded and saved
+    case assetUploadEnd(CSAssetUpload)
+    // The upload session has been completed
+    // Parameters are the array of uploaded assets and an
+    // array of failed uploads.
+    case transactionEnd([(String, CosyncAsset)], [CSUploadItem])
+}
+
+// Errors that can happen during the upload operation,
 @available(macOS 10.15, *)
 public enum CSUploadError: Error {
+    // Unable to decode the image
     case invalidImage
+    // Failed to upload or save the image
     case uploadFail
+    // No uploads provided
     case noUploads
+    // Unable to initialize asset upload
+    case initReqError
+    // Unable to create valid CosyncAsset
+    case createAssetError
     
     public var message: String {
         switch self {
@@ -65,111 +215,26 @@ public enum CSUploadError: Error {
             return "Whoop! Something went wrong while uploading to server"
         case .noUploads:
             return "No uploads specified"
+        case .initReqError:
+            return "Unable to init asset"
+        case .createAssetError:
+            return "Unable to create asset"
         }
     }
 }
 
+// Client callback definition
 @available(macOS 10.15, *)
-public struct CSUploadItem {
-    public enum MediaType {
-        case image
-        case video
-        case audio
-        case unknown
-    }
-    
-    var path: String {
-        switch type
-        {
-        case .image:
-            return "image"
-        case .video:
-            return "video"
-        case .audio:
-            return "audio"
-        case .unknown:
-            return "unknown"
-        }
-    }
-    
-    var id: ObjectId
-    var url: URL
-    var type: MediaType = .unknown
-    var noCut: Bool = false
-    var smallCutSize:Int = 300
-    var mediumCutSize: Int = 600
-    var largeCutSize: Int = 900
-    var originalSize: Int = 0
-    var contentType: String = ""
-    var expiration: Double = 168.0
-    
-    public init(id: ObjectId, url: URL, type: MediaType, expiration: Double) {
-        self.id = id
-        self.url = url
-        self.type = type
-        self.expiration = expiration
-    }
-}
+public typealias CSUploadCallback = (_ state: CSUploadState) -> Void
 
-@available(macOS 10.15, *)
-public enum CSUploadState {
-    case transactionStart(Int, CSTransaction)
-    case assetStart(Int, Int, CosyncAssetUpload)
-    case assetPogress(Int64, Int64, CosyncAssetUpload)
-    case assetUploadError(Error, CosyncAssetUpload)
-    case assetUploadEnd(CosyncAssetUpload)
-    case assetCreated(CosyncAsset, CosyncAssetUpload)
-    case transactionEnd(Int, [CosyncAsset], CSTransaction)
-}
-
-@available(macOS 10.15, *)
-public typealias CSUploadCallback = (_ txId: String, _ state: CSUploadState) -> Void
-
-@available(macOS 10.15, *)
-public class CSTransaction {
-    
-    var txId: String = ""
-    var uploadsTotal = 0
-    var uploadsRemaining = 0
-    var uploadsIndex: Int {
-        return uploadsTotal - uploadsRemaining
-    }
-    var uploads: [CosyncAssetUpload] = []
-    var assets: [CosyncAsset] = []
-    var onUpload: CSUploadCallback
-    
-    init(txId: String, cb: @escaping CSUploadCallback) {
-        self.txId = txId
-        self.onUpload = cb
-    }
-    
-    func start() {
-        uploadsTotal = uploads.count
-        uploadsRemaining = uploadsTotal
-    }
-    func uploadComplete(id: ObjectId, asset: CosyncAsset?) -> Bool {
-        
-        if let ca = asset { assets.append(ca) }
-        uploads.removeAll(where: {$0._id == id})
-        uploadsRemaining -= 1
-        return uploads.isEmpty
-    }
-    
-    static func findTx(txs: [CSTransaction], txId: String) -> CSTransaction? {
-        return txs.first(where: {$0.txId == txId})
-    }
-    
-    static func findUploadInTx(txs: [CSTransaction], id: ObjectId) -> (CSTransaction, CosyncAssetUpload)? {
-        var ret: (CSTransaction, CosyncAssetUpload)?
-        for tx in txs {
-            if let upload = tx.uploads.first(where: {$0._id == id}) {
-                ret = (tx, upload)
-            }
-        }
-        return ret
-    }
-}
-
+// Singleton object that implements the upload API.
+// The uploadAssets funtion is used to trigger and upload.
+// During an upload session a callback is used
+// to communicate progress and results to the client.
+// See CSUpload state.
+// Multiple uploads can be initiated. Each upload
+// call is done in the context of its own task and
+// state.
 @available(macOS 10.15, *)
 public class CSUploadManager: NSObject, URLSessionTaskDelegate {
     
@@ -177,72 +242,23 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
     private var realm: Realm!
     private var app: App!
     private var userId: String!
-    private var uploadToken: NotificationToken! = nil
-    private var assetToken: NotificationToken! = nil
-    private var uploadQueue: Deque<CosyncAssetUpload> = []
-    private var activeTransactions: [CSTransaction] = []
-    private var sessionId: String!
     
+    // Start the upload manager.
+    // Must be called upon first access of the sigleton
     @MainActor
     public func configure(app: App, realm: Realm) {
         
         self.app = app
         self.realm = realm
-        if let session = UIDevice.current.identifierForVendor?.uuidString {
-            self.sessionId = session
-        }
-        
-        if let user = self.app.currentUser {
-            userId = user.id
-            setUpAssetListener()
-            setUpUploadListener()
-        }
     }
     
+    // Upload a collection of assets
+    // uploadItems - Array of CSUploadItem that contains all the
+    // parameters required for the upload.
+    // onUpload - Closure provided by the client that
+    // communicates upload state
     @MainActor
-    private func setUpAssetListener() {
-            
-        let assetList = realm.objects(CosyncAsset.self).filter("userId == '\(userId!)'")
-            
-        self.assetToken = assetList.observe { (changes: RealmCollectionChange) in
-                
-            switch changes {
-            case .initial: break
-            case .update(let results, _, let insertions, _):
-                for index in insertions {
-                    let asset = results[index]
-                    self.onAssetCreated(asset: asset)
-                }
-            case .error(let error):
-                fatalError("\(error)")
-            }
-        }
-    }
-    
-    @MainActor
-    private func setUpUploadListener() {
-            
-        let results = realm.objects(CosyncAssetUpload.self)
-                .filter("userId == '\(userId!)' && sessionId=='\(sessionId!)'")
-            
-        self.uploadToken = results.observe { [self] (changes: RealmCollectionChange) in
-    
-            switch changes {
-            case .initial: break
-            case .update( let results, _, _, let modifications):
-                for index in modifications {
-                    if results[index].status == "initialized" {
-                        self.uploadAsset(assetToUpload: results[index])
-                    }
-                }
-            case .error(let error):
-                fatalError("\(error)")
-            }
-        }
-    }
-    
-    @MainActor
-    public func uploadAssets(uploadItems: [CSUploadItem], transactionId: String, onUpload: @escaping CSUploadCallback) throws {
+    public func uploadAssets(uploadItems: [CSUploadItem], onUpload: @escaping CSUploadCallback) throws {
         
         csLogger.info("starting upload request")
         
@@ -250,32 +266,60 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
             throw CSUploadError.noUploads
         }
         
-        let tx = CSTransaction(txId: transactionId, cb: onUpload)
-        activeTransactions.append(tx)
-        
-        for item in uploadItems {
-            do {
-                let uploadRequest = try createUploadRequest(item, transactionId: transactionId)
-                uploadQueue.append(uploadRequest)
-                tx.uploads.insert(uploadRequest, at: 0)
+        Task {
+            let callback = onUpload
+            var assets: [(String, CosyncAsset)] = []
+            var failedUploads: [CSUploadItem] = []
+            
+            // Inform the client we are about to start
+            // an upload session
+            onUpload(.transactionStart)
+            
+            var index = 0
+            for item in uploadItems {
+                do {
+                    // 1. Create an upload arguments struct that will
+                    // accumulate upload state
+                    var assetArgs = try await createAssetArgs(item: item)
+                    
+                    // 2. Add callback and progress info.
+                    assetArgs.uploadCallback = onUpload
+                    assetArgs.index = index
+                    assetArgs.uploadSessionCount = uploadItems.count
+                    assetArgs.tag = item.tag
+                    callback(.assetStart(assetArgs.index, assetArgs.uploadSessionCount, assetArgs))
+                    
+                    // 3. Upload and save
+                    if let asset = try await self.uploadAsset(assetToUpload: assetArgs) {
+                        assets.append((item.tag, asset))
+                    }
+                }
+                catch {
+                    // On error, skip the upload and move on
+                    onUpload(.assetInitError(error, item))
+                    failedUploads.append(item)
+                    csLogger.error("\(error.localizedDescription)")
+                }
+                index += 1
             }
-            catch {
-                csLogger.error("\(error.localizedDescription)")
-            }
+            
+            // Inform the client we are done with an upload
+            // session and provide any assets that resulted
+            // from the operation.
+            callback(.transactionEnd(assets, failedUploads))
         }
-        
-        tx.start()
-        
-        onNextUpload()
         
         csLogger.info("end upload request")
     }
     
-    private func createUploadRequest(_ item: CSUploadItem, transactionId: String) throws -> CosyncAssetUpload {
+    // Gather all of the upload parameters into a CSAssetUpload.
+    // It also calls CosyncInitAsset on the server to retrieve
+    // temporary write URL's
+    private func createAssetArgs(item: CSUploadItem) async throws -> CSAssetUpload {
         
-        let assetUpload = CosyncAssetUpload()
+        var assetArgs = CSAssetUpload()
         
-        if (item.type == .image) {
+        if (item.mediaType == .image) {
             let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [item.url.absoluteString], options: nil)
             fetchResult.enumerateObjects { object, index, stop in
                 let phAsset = object as PHAsset
@@ -288,9 +332,7 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
                     phOptions.resizeMode = PHImageRequestOptionsResizeMode.exact
                     phOptions.isSynchronous = true;
                     let fileName = file.originalFilename.filter({$0 != " "})
-                   
-                    let contentType = fileName.mimeType()
-                    
+
                     imageManager.requestImage(for: phAsset,
                                               targetSize: CGSize(width: phAsset.pixelWidth, height: phAsset.pixelHeight),
                                               contentMode: .aspectFit,
@@ -299,13 +341,13 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
                         
                         if  let image = image {
                             let fileSize = file.value(forKey: "fileSize") as? Int
-                            assetUpload.extra = phAsset.localIdentifier
-                            assetUpload.size = fileSize! + (item.noCut ? 0 : 1000 )
-                            assetUpload.color = image.averageColor()
-                            assetUpload.xRes = phAsset.pixelWidth
-                            assetUpload.yRes = phAsset.pixelHeight
-                            assetUpload.filePath = item.path + "/" + fileName
-                            assetUpload.contentType = (item.contentType.isEmpty) ? contentType : item.contentType
+                            assetArgs.extra = phAsset.localIdentifier
+                            assetArgs.size = fileSize! + (item.noCut ? 0 : 1000 )
+                            assetArgs.color = image.averageColor()
+                            assetArgs.xRes = phAsset.pixelWidth
+                            assetArgs.yRes = phAsset.pixelHeight
+                            assetArgs.filePath = item.path + "/" + fileName
+                            assetArgs.contentType = fileName.mimeType()
                         }
                     })
                 }
@@ -314,131 +356,217 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
         else {
             let attr = try FileManager.default.attributesOfItem(atPath: item.url.path)
             let dict = attr as NSDictionary
-            assetUpload.size = Int(dict.fileSize()) +  (item.noCut ? 0 : 1000 )// for additional cut
-            assetUpload.extra = item.url.lastPathComponent
-            assetUpload.filePath = item.path + "/" + item.url.lastPathComponent.filter({$0 != " "})
-            assetUpload.contentType = (item.contentType.isEmpty) ? item.url.mimeType() : item.contentType
+            assetArgs.size = Int(dict.fileSize()) +  (item.noCut ? 0 : 1000)
+            assetArgs.extra = item.url.lastPathComponent
+            assetArgs.filePath = item.path + "/" + item.url.lastPathComponent.filter({$0 != " "})
+            assetArgs.contentType = item.url.mimeType()
         }
         
-        assetUpload.expirationHours = item.expiration
-        assetUpload.transactionId = transactionId
-        assetUpload._id = item.id
-        assetUpload.userId =  self.userId
-        assetUpload.sessionId = self.sessionId
-        assetUpload.noCuts = item.noCut
-        assetUpload.smallCutSize = item.smallCutSize
-        assetUpload.mediumCutSize = item.mediumCutSize
-        assetUpload.largeCutSize = item.largeCutSize
-        assetUpload.originalSize = item.originalSize
-        assetUpload.createdAt = Date()
-        assetUpload.updatedAt = Date()
+        if (assetArgs.filePath.isEmpty) {
+            throw CSUploadError.invalidImage
+        }
         
-        csLogger.info("\(assetUpload)")
+        let user = self.app.currentUser
+        let result = try await user!.functions.CosyncInitAsset([AnyBSON(assetArgs.filePath), AnyBSON(assetArgs.expirationHours), AnyBSON(assetArgs.contentType)])
+        
+        if let stringValue = result.stringValue {
+            let decoder = JSONDecoder()
+            let uploadResult = try decoder.decode(CSInitAssetResult.self, from: Data(stringValue.utf8))
+            if (uploadResult.statusCode != 200) {
+                throw CSUploadError.initReqError
+            }
+            csLogger.info("Called function 'CosynsCreateAssetUpload' and got result: \(uploadResult)")
+            assetArgs.writeUrls = CSWriteUrls()
+            assetArgs.writeUrls?.writeUrlSmall = uploadResult.writeUrls?.writeUrlSmall ?? ""
+            assetArgs.writeUrls?.writeUrlMedium = uploadResult.writeUrls?.writeUrlMedium ?? ""
+            assetArgs.writeUrls?.writeUrlLarge = uploadResult.writeUrls?.writeUrlLarge ?? ""
+            assetArgs.writeUrls?.writeUrl = uploadResult.writeUrls?.writeUrl ?? ""
+            assetArgs.writeUrls?.writeUrlVideoPreview = uploadResult.writeUrls?.writeUrlVideoPreview ?? ""
+            assetArgs.contentId = uploadResult.contentId!
+            
+            assetArgs.expirationHours = item.expirationHours == 0 ? 24 : item.expirationHours
+            assetArgs.noCuts = item.noCut
+        }
+        else {
+            throw CSUploadError.initReqError
+        }
 
-        return assetUpload
+        return assetArgs
     }
 
-    @MainActor
-    private func uploadAsset(assetToUpload: CosyncAssetUpload) {
+    // Perform the asset upload progress. It perfomrs the following.
+    // 1. Check the asset type and call the associated asset processing function.
+    // 2. If requested, process any cuts.
+    // 3. Call the server CosyncAssetCreate. If succesful, it
+    //    returns a well formed CosyncAsset with read URL's
+    // 4. Commit the CosyncAsset to make it available to the client.
+    private func uploadAsset(assetToUpload: CSAssetUpload) async throws -> CosyncAsset? {
         
+        var asset: CosyncAsset?
         let session = URLSession(configuration: .default)
         session.csActiveUpload = assetToUpload
-        Task {
-            do {
-                csLogger.info("start upload asset")
-               
-                if (assetToUpload.contentType!.contains("image")) {
-                    try await uploadImage(session: session, assetToUpload: assetToUpload)
-                }
-                else if (assetToUpload.contentType!.contains("video")){
-                    try await uploadVideo(session: session, assetToUpload: assetToUpload)
-                }
-                else {
-                    let fileUrl = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(assetToUpload.extra)
-                    try await self.uploadFile(session: session, writeUrl: assetToUpload.writeUrl!, fileUrl: fileUrl)
-                }
-                
-                csLogger.info("end upload asset")
-                
-                session.csClearActive()
-                onNextUpload(currentUpload: assetToUpload, status: "uploaded")
-            }
-            catch {
-                csLogger.error("upload file fails")
-                if let active = CSTransaction.findUploadInTx(txs: self.activeTransactions, id: assetToUpload._id) {
-                    (active.0.onUpload)(active.0.txId, .assetUploadError(error, assetToUpload))
-                }
-                session.csClearActive()
-                onNextUpload(currentUpload: assetToUpload, status: "failure")
-            }
+
+        // Harvest all arguments for easy reference
+        let filename = assetToUpload.extra
+        let writeURL = assetToUpload.writeUrls!.writeUrl
+        let contentType = assetToUpload.contentType
+        let writeSmallURL = assetToUpload.writeUrls!.writeUrlSmall
+        let writeMediumURL = assetToUpload.writeUrls!.writeUrlMedium
+        let writeLargeURL = assetToUpload.writeUrls!.writeUrlLarge
+        let smallCutSize = assetToUpload.smallCutSize
+        let mediumCutSize = assetToUpload.smallCutSize
+        let largeCutSize = assetToUpload.smallCutSize
+        let videoPreviewURL = assetToUpload.writeUrls!.writeUrlVideoPreview
+        let noCuts = assetToUpload.noCuts
+        
+        csLogger.info("start upload asset")
+        if (contentType.contains("image")) {
+            
+            try await uploadImage(session: session, filename: filename, writeURL: writeURL, contentType: contentType, writeURLSmall: writeSmallURL, writeURLMedium: writeMediumURL, writeURLLarge: writeLargeURL, smallCutSize: smallCutSize, mediumCutSize: mediumCutSize, largeCutSize: largeCutSize, noCuts:noCuts)
         }
+        else if (contentType.contains("video")){
+            
+            try await uploadVideo(session: session, writeUrl: writeURL, writePreviewURL: videoPreviewURL, filename: filename, writeURLSmall: writeSmallURL, writeURLMedium: writeMediumURL, writeURLLarge: writeLargeURL, smallCutSize: smallCutSize, mediumCutSize: mediumCutSize, largeCutSize: largeCutSize, noCuts: noCuts)
+        }
+        else {
+            let fileUrl = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(assetToUpload.extra)
+            try await self.uploadFile(session: session, writeUrl: assetToUpload.writeUrls!.writeUrl, fileUrl: fileUrl)
+        }
+        
+        session.csClearActive()
+        
+        asset = try await self.saveAsset(assetToUpload)
+        
+        return asset
     }
     
-    @MainActor
-    public func uploadImage(session: URLSession, assetToUpload: CosyncAssetUpload) async throws {
+    // Calls the server CosyncAssetCreate and commit the returned
+    // CosyncAsset.
+    private func saveAsset(_ assetArgs: CSAssetUpload) async throws -> CosyncAsset {
+        
+        var asset: CosyncAsset?
+        let user = self.app.currentUser
+        
+        let result = try await user!.functions.CosyncCreateAsset([
+                                                AnyBSON(assetArgs.filePath),
+                                                AnyBSON(assetArgs.contentId),
+                                                AnyBSON(assetArgs.contentType),
+                                                AnyBSON(assetArgs.expirationHours),
+                                                AnyBSON(assetArgs.size),
+                                                AnyBSON(assetArgs.duration),
+                                                AnyBSON(assetArgs.color),
+                                                AnyBSON(assetArgs.xRes),
+                                                AnyBSON(assetArgs.yRes),
+                                                AnyBSON(assetArgs.caption),
+                                                AnyBSON(assetArgs.extra)])
+        if let stringValue = result.stringValue {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .formatted(Formatter.iso8601)
+            let createResult = try decoder.decode(CSCreateAssetResult.self, from: Data(stringValue.utf8))
+            if (createResult.statusCode != 200) {
+                throw CSUploadError.createAssetError
+            }
+            
+            // IMPORTANT: It is up to the client to commit the
+            // CosyncAsset.
+            DispatchQueue.main.sync {
+                try! realm.write {
+                    realm.add(createResult.asset)
+                }
+            }
+            asset = createResult.asset
+        }
+        else {
+            throw CSUploadError.createAssetError
+        }
+        
+        return asset!
+    }
+    
+    public func uploadImage(session: URLSession,
+                            filename: String?,
+                            writeURL: String?,
+                            contentType: String?,
+                            writeURLSmall: String?,
+                            writeURLMedium: String?,
+                            writeURLLarge: String?,
+                            smallCutSize: Int?,
+                            mediumCutSize: Int?,
+                            largeCutSize: Int?,
+                            noCuts: Bool?) async throws {
         
         csLogger.info("\(#function) start upload image")
         
-        if let uploadImage = await UIImage.getImageFromFile(fileName: assetToUpload.extra) {
+        if let uploadImage = await UIImage.getImageFromFile(fileName: filename!) {
 
             var fullImageData: Data?
-            if assetToUpload.contentType == "image/png" {
+            if contentType == "image/png" {
                 fullImageData = uploadImage.pngData()
             }
             else {
                 fullImageData = uploadImage.jpegData(compressionQuality: 1.0)
             }
-            try await self.uploadData(session: session, data: fullImageData!, writeUrl: assetToUpload.writeUrl!, mimeType: assetToUpload.contentType!)
-            try await self.uploadImageCuts(session: session, assetToUpload: assetToUpload, imageToCut: uploadImage, mimeType: assetToUpload.contentType!)
+            try await self.uploadData(session: session, data: fullImageData!, writeUrl: writeURL!, mimeType: contentType!)
+            try await self.uploadImageCuts(session: session, writeURLSmall: writeURLSmall, writeURLMedium: writeURLMedium, writeURLLarge: writeURLLarge, smallCutSize: smallCutSize, mediumCutSize: mediumCutSize, largeCutSize: largeCutSize, imageToCut: uploadImage, mimeType: contentType!, noCuts: noCuts)
         }
         
         csLogger.info("end upload image")
     }
     
     @MainActor
-    public func uploadVideo(session: URLSession, assetToUpload: CosyncAssetUpload) async throws {
+    private func uploadVideo(session: URLSession,
+                            writeUrl: String?,
+                            writePreviewURL: String?,
+                            filename: String?,
+                            writeURLSmall: String?,
+                            writeURLMedium: String?,
+                            writeURLLarge: String?,
+                            smallCutSize: Int?,
+                            mediumCutSize: Int?,
+                            largeCutSize: Int?,
+                            noCuts: Bool?) async throws {
         
         csLogger.info("start upload video")
        
-        let writeUrl = assetToUpload.writeUrl!
-        let fileUrl = FileManager.default.temporaryDirectory.appendingPathComponent(assetToUpload.extra)
-//        let documentPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-//        let fileUrl = documentPath.appendingPathComponent(assetToUpload.extra)
-        
+        let fileUrl = FileManager.default.temporaryDirectory.appendingPathComponent(filename!)
           
-        try await self.uploadFile(session: session, writeUrl: writeUrl, fileUrl: fileUrl)
+        try await self.uploadFile(session: session, writeUrl: writeUrl!, fileUrl: fileUrl)
         let preview = fileUrl.generateVideoThumbnail()!
         let fullImageData = preview.pngData()!
         
-       
+        try await self.uploadData(session: session, data: fullImageData, writeUrl: writePreviewURL!, mimeType: "image/png")
         
-        try await self.uploadData(session: session, data: fullImageData, writeUrl: assetToUpload.writeUrlVideoPreview!, mimeType: "image/png")
-        
-        try await self.uploadImageCuts(session: session, assetToUpload: assetToUpload, imageToCut: preview, mimeType: "image/png")
+        try await self.uploadImageCuts(session: session, writeURLSmall: writeURLSmall, writeURLMedium: writeURLMedium, writeURLLarge: writeURLLarge, smallCutSize: smallCutSize, mediumCutSize: mediumCutSize, largeCutSize: largeCutSize, imageToCut: preview, mimeType: "image/png", noCuts: noCuts)
        
        
         try FileManager.default.removeItem(atPath: fileUrl.path) // remove local temp video file
         csLogger.info("end upload video")
-        
-       
     }
     
-    @MainActor
-    public func uploadImageCuts(session: URLSession, assetToUpload: CosyncAssetUpload, imageToCut: UIImage, mimeType: String) async throws {
+    private func uploadImageCuts(session: URLSession,
+                                writeURLSmall: String?,
+                                writeURLMedium: String?,
+                                writeURLLarge: String?,
+                                smallCutSize: Int?,
+                                mediumCutSize: Int?,
+                                largeCutSize: Int?,
+                                imageToCut: UIImage,
+                                mimeType: String,
+                                noCuts: Bool?) async throws {
         
         csLogger.info("start upload image cuts")
         
-        if (assetToUpload.noCuts!) {
-            return;
+        if (noCuts!) {
+            return
         }
         
-        if let writeUrlSmall = assetToUpload.writeUrlSmall,
-           let writeUrlMedium = assetToUpload.writeUrlMedium,
-           let writeUrlLarge = assetToUpload.writeUrlLarge {
+        if let writeUrlSmall = writeURLSmall,
+           let writeUrlMedium = writeURLMedium,
+           let writeUrlLarge = writeURLLarge {
             
-            let imageSmall = imageToCut.imageCut(cutSize: CGFloat(assetToUpload.smallCutSize!))
-            let imageMedium = imageToCut.imageCut(cutSize: CGFloat(assetToUpload.mediumCutSize!))
-            let imageLarge =  imageToCut.imageCut(cutSize: CGFloat(assetToUpload.largeCutSize!))
+            let imageSmall = imageToCut.imageCut(cutSize: CGFloat(smallCutSize!))
+            let imageMedium = imageToCut.imageCut(cutSize: CGFloat(mediumCutSize!))
+            let imageLarge =  imageToCut.imageCut(cutSize: CGFloat(largeCutSize!))
              
             func fullImageData(_ image: UIImage) -> Data? {
                 return (mimeType == "image/png") ? image.pngData() : image.jpegData(compressionQuality: 1.0)
@@ -457,9 +585,13 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
         csLogger.info("end upload image cuts")
     }
     
-    public func uploadFile(session: URLSession, writeUrl: String, fileUrl: URL) async throws  {
+    private func uploadFile(session: URLSession, writeUrl: String, fileUrl: URL) async throws  {
         
         csLogger.info("start upload file")
+        
+        if (writeUrl.isEmpty) {
+            throw CSUploadError.uploadFail
+        }
         
         var urlRequest = URLRequest(url: URL(string: writeUrl)!)
         urlRequest.httpMethod = "PUT"
@@ -479,9 +611,14 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
         csLogger.info("end upload file")
     }
     
-    public func uploadData(session: URLSession, data: Data, writeUrl: String, mimeType: String) async throws {
+
+    private func uploadData(session: URLSession, data: Data, writeUrl: String, mimeType: String) async throws {
         
         csLogger.info("start upload data")
+        
+        if (writeUrl.isEmpty) {
+            throw CSUploadError.uploadFail
+        }
         
         var urlRequest = URLRequest(url: URL(string: writeUrl)!)
         urlRequest.httpMethod = "PUT"
@@ -503,89 +640,10 @@ public class CSUploadManager: NSObject, URLSessionTaskDelegate {
     }
     
     public func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
-        
-        let upload = session.csActiveUpload
-        
         DispatchQueue.main.async {
-            if let tx = CSTransaction.findTx(txs: self.activeTransactions, txId: upload.transactionId) {
-                tx.onUpload(tx.txId, .assetPogress(totalBytesSent, totalBytesExpectedToSend, upload))
-            }
+            let upload = session.csActiveUpload
+            upload.uploadCallback!(.assetPogress(totalBytesSent, totalBytesExpectedToSend, upload))
             csLogger.info("sent: \(bytesSent) total: \(totalBytesSent) expected: \(totalBytesExpectedToSend)")
-        }
-    }
-}
-
-// Upload and transaction event handlers
-extension CSUploadManager {
-    @MainActor
-    private func onAssetCreated(asset: CosyncAsset?) {
-        csLogger.info("asset added")
-        if let active = CSTransaction.findUploadInTx(txs: self.activeTransactions, id: asset!._id) {
-            let tx = active.0
-            (tx.onUpload)(tx.txId, .assetCreated(asset!, active.1))
-            if (active.0.uploadComplete(id: asset!._id , asset: asset!)) {
-                // If we have no more uploads then remove the transaction
-                csLogger.info("transaction remove (asset)")
-                self.activeTransactions.removeAll(where: {$0.txId == active.0.txId})
-                (tx.onUpload)(tx.txId, .transactionEnd(tx.uploadsTotal, tx.assets, tx))
-            }
-        }
-    }
-    
-    @MainActor
-    private func onUploadError(upload: CosyncAssetUpload) {
-        // Remove upload on error
-        csLogger.info("upload error")
-        if let active = CSTransaction.findUploadInTx(txs: self.activeTransactions, id: upload._id) {
-            if (active.0.uploadComplete(id: upload._id, asset: nil)) {
-                // If we have no more uploads then remove the transaction
-                csLogger.info("transaction removed (error)")
-                self.activeTransactions.removeAll(where: {$0.txId == active.0.txId})
-            }
-        }
-    }
-    
-    @MainActor
-    private func onNextUpload(currentUpload: CosyncAssetUpload? = nil, status: String  = "") {
-        
-        if let upload = currentUpload {
-            if let active = CSTransaction.findUploadInTx(txs: self.activeTransactions, id: upload._id)
-            {
-                let tx = active.0
-                (tx.onUpload)(tx.txId, .assetUploadEnd(upload))
-                
-                try! realm.write {
-                    upload.status = status
-                }
-                
-                var finished = true
-                if uploadQueue.first(where: {$0.transactionId == upload.transactionId}) != nil
-                {
-                    finished = false
-                }
-                
-                if (finished) {
-                    // No more transactions
-                    csLogger.info("no more uploads for tx")
-                }
-            }
-        }
-        
-        if (!uploadQueue.isEmpty) {
-            let nextUpload = uploadQueue.popFirst()!
-            do {
-                try realm.write {
-                    realm.add(nextUpload)
-                }
-            }
-            catch {
-                fatalError("Unable to write data")
-            }
-            
-            if let active = CSTransaction.findUploadInTx(txs: self.activeTransactions, id: nextUpload._id) {
-                let tx = active.0
-                (tx.onUpload)(tx.txId, .assetStart(tx.uploadsIndex, tx.uploadsTotal, active.1))
-            }
         }
     }
 }
